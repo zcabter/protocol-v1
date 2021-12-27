@@ -1778,7 +1778,7 @@ pub mod clearing_house {
     }
 }
 
-fn market_initialized(markets: &Loader<Markets>, market_index: u64) -> Result<()> {
+fn market_initialized(markets: &AccountLoader<Markets>, market_index: u64) -> Result<()> {
     if !markets.load()?.markets[Markets::index_from_u64(market_index)].initialized {
         return Err(ErrorCode::MarketIndexNotInitialized.into());
     }
@@ -1787,7 +1787,7 @@ fn market_initialized(markets: &Loader<Markets>, market_index: u64) -> Result<()
 
 fn valid_oracle_for_market(
     oracle: &AccountInfo,
-    markets: &Loader<Markets>,
+    markets: &AccountLoader<Markets>,
     market_index: u64,
 ) -> Result<()> {
     if !markets.load()?.markets[Markets::index_from_u64(market_index)]
