@@ -7,6 +7,7 @@ use crate::{
 };
 
 
+use anchor_client::Cluster;
 use clearing_house::state::history::curve::CurveHistory;
 use clearing_house::state::history::deposit::DepositHistory;
 use clearing_house::state::history::funding_payment::FundingPaymentHistory;
@@ -21,29 +22,25 @@ use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::read_keypair_file;
 use std::env;
 use std::rc::Rc;
-use std::str::FromStr;
 use std::time::Duration;
 
 impl ClearingHouse<DefaultClearingHouseAccount> {
-    pub fn default_from_env() -> ClearingHouse<DefaultClearingHouseAccount> {
-        // todo: refactor configs into ClearingHouseConfig
-        let state_pubkey = Pubkey::from_str(&env::var(constants::envvar::DRFIT_STATE_PUBKEY).unwrap()).unwrap();
-        let wallet = read_keypair_file(env::var(constants::envvar::WALLET_JSON_PATH).unwrap()).unwrap();
-        let commitment_config = CommitmentConfig::finalized();
-        let conn = Rc::new(Connection::from_str(
-            &env::var(constants::envvar::TARGET_NET).unwrap(),
-            commitment_config.clone(),
-        ));
-        let rpc_client = RpcClient::new_with_commitment(
-            conn.get_rpc_url(),
-            commitment_config,
-        );
+    pub fn default(cluster: Cluster) -> Self {
+        ClearingHouse::<DefaultClearingHouseAccount>::default_with_commitment(cluster, CommitmentConfig::finalized())
+    }
+
+    pub fn default_with_commitment(cluster: Cluster, commitment_config: CommitmentConfig) -> Self {
+        let keypair_file = env::var(constants::env::WALLET).unwrap_or(String::from(shellexpand::tilde("~/.config/solana/id.json")));
+        println!("Parsing wallet keypair from: {}", keypair_file);
+        let wallet = read_keypair_file(keypair_file).unwrap();
+        let conn = Rc::new(Connection::from(cluster,commitment_config.clone()));
+        let rpc_client = RpcClient::new_with_commitment(conn.get_rpc_url(), commitment_config);
         let rpc_client = Rc::new(DriftRpcClient::new(rpc_client));
         ClearingHouse::new (
             Box::new(wallet),
             conn.clone(),
             rpc_client.clone(),
-            DefaultClearingHouseAccount::new(conn.clone(), rpc_client, state_pubkey),            
+            DefaultClearingHouseAccount::new(conn.clone(), rpc_client),            
         )
     }
 }
@@ -61,7 +58,9 @@ pub struct DefaultClearingHouseAccount {
 }
 
 impl DefaultClearingHouseAccount {
-    pub fn new(conn: Rc<Connection>, client: Rc<DriftRpcClient>, state_pubkey: Pubkey) -> DefaultClearingHouseAccount {
+    pub fn new(conn: Rc<Connection>, client: Rc<DriftRpcClient>) -> DefaultClearingHouseAccount {
+        let program_id = clearing_house::ID;
+        let state_pubkey = Pubkey::find_program_address(&["clearing_house".as_bytes()], &program_id).0;
         let state_data = client.get_account_data::<State>(&state_pubkey).unwrap();
         let state = Box::new(account::WebSocketAccountSubscriber::<State>::new(state_pubkey, "State", client.clone()));
         let markets = Box::new(account::WebSocketAccountSubscriber::<Markets>::new(state_data.markets, "Markets", client.clone()));
@@ -71,7 +70,6 @@ impl DefaultClearingHouseAccount {
         let funding_rate_history = Box::new(account::WebSocketAccountSubscriber::<FundingRateHistory>::new(state_data.funding_payment_history, "FundingRateHistory", client.clone()));
         let curve_history = Box::new(account::WebSocketAccountSubscriber::<CurveHistory>::new(state_data.curve_history, "CurveHistory", client.clone()));
         let liquidation_history = Box::new(account::WebSocketAccountSubscriber::<LiquidationHistory>::new(state_data.liquidation_history, "LiquidationHistory", client.clone()));
-        
         DefaultClearingHouseAccount {
             connection: conn,
             state,
@@ -262,7 +260,7 @@ pub mod account {
         name: &'static str,
         subscription: RefCell<Option<PubsubAccountClientSubscription>>,
         client: Rc<DriftRpcClient>,
-        data: RefCell<Option<T>>,
+        data: Box<RefCell<Option<T>>>,
         _marker: PhantomData<T>,
     }
 
@@ -318,7 +316,7 @@ pub mod account {
                 name,
                 subscription: RefCell::new(None),
                 client,
-                data: RefCell::new(None),
+                data: Box::new(RefCell::new(None)),
                 _marker: PhantomData,
             }
         }
