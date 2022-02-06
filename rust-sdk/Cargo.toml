@@ -19,6 +19,6 @@ base64 = "0.12.3"
 spl-token = "3.2"
 spl-associated-token-account = "1.0.3"
 thiserror = "1.0"
-anyhow = "1.0"
 shellexpand = "2.1.0"
 clearing-house = { path = "../programs/clearing_house", features = ["no-entrypoint"] }
+

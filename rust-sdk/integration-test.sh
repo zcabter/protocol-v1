@@ -1,0 +1,1 @@
+cargo test ch_integration -- --nocapture
