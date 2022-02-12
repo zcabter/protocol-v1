@@ -17,28 +17,33 @@ use solana_sdk::{
 use spl_token::ID as TOKEN_PROGRAM_ID;
 
 use super::{
-    util::{size::*, DriftRpcClient},
+    util::{size::*, DriftRpcClient, get_state_pubkey},
     ClearingHouse,
 };
 
-pub struct SimpleClearingHouseAdmin {
+pub struct DefaultClearingHouseAdmin {
     pub program_id: Pubkey,
     pub wallet: Box<dyn Signer>,
     pub client: DriftRpcClient,
 }
 
-impl SimpleClearingHouseAdmin {
+impl DefaultClearingHouseAdmin {
     pub fn default(cluster: Cluster) -> Self {
         let wallet = Box::new(read_wallet_from_default().unwrap());
         let commitment = CommitmentConfig::processed();
         Self::new(wallet, cluster, commitment)
     }
 
+    pub fn default_with_commitment(cluster: Cluster, commitment_config: CommitmentConfig) -> Self {
+        let wallet = Box::new(read_wallet_from_default().unwrap());
+        Self::new(wallet, cluster, commitment_config)
+    }
+
     pub fn new(wallet: Box<dyn Signer>, cluster: Cluster, commitment_config: CommitmentConfig) -> Self {
         let conn = Rc::new(ConnectionConfig::from(cluster, commitment_config.clone()));
         let rpc_client = RpcClient::new_with_commitment(conn.get_rpc_url(), commitment_config);
-        let rpc_client = DriftRpcClient::new(rpc_client);
-        SimpleClearingHouseAdmin {
+        let rpc_client = DriftRpcClient::new(rpc_client, conn);
+        DefaultClearingHouseAdmin {
             program_id: clearing_house::id(),
             wallet,
             client: rpc_client,
@@ -46,7 +51,7 @@ impl SimpleClearingHouseAdmin {
     }
 }
 
-impl ClearingHouse for SimpleClearingHouseAdmin {
+impl ClearingHouse for DefaultClearingHouseAdmin {
     fn program_id(&self) -> Pubkey {
         self.program_id
     }
@@ -60,7 +65,7 @@ impl ClearingHouse for SimpleClearingHouseAdmin {
     }
 }
 
-impl ClearingHouseAdmin for SimpleClearingHouseAdmin {}
+impl ClearingHouseAdmin for DefaultClearingHouseAdmin {}
 
 pub trait ClearingHouseAdmin: ClearingHouse {
     fn send_initialize_clearing_house(
@@ -68,7 +73,7 @@ pub trait ClearingHouseAdmin: ClearingHouse {
         usdc_mint: &Pubkey,
         admin_controls_prices: bool,
     ) -> DriftResult<(Signature, Signature)> {
-        match self.client().c.get_account(&self.get_state_pubkey()) {
+        match self.client().c.get_account(&get_state_pubkey()) {
             Ok(_) => Err(DriftError::AccountCannotBeInitialized {
                 name: String::from("State"),
                 reason: String::from("Clearing house already initialized"),
@@ -181,7 +186,7 @@ pub trait ClearingHouseAdmin: ClearingHouse {
     ) -> DriftResult<Signature> {
         let state = self
             .client()
-            .get_account_data::<State>(&self.get_state_pubkey())?;
+            .get_account_data::<State>(&get_state_pubkey())?;
         let markets = self
             .client()
             .get_account_data::<Markets>(&state.markets)?
@@ -205,7 +210,7 @@ pub trait ClearingHouseAdmin: ClearingHouse {
             Context {
                 accounts: &accounts::InitializeMarket {
                     admin: self.wallet().pubkey(),
-                    state: self.get_state_pubkey(),
+                    state: get_state_pubkey(),
                     markets: state.markets,
                     oracle: price_oracle.clone(),
                 },

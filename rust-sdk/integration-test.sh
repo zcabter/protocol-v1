@@ -1,1 +1,1 @@
-cargo test ch_integration -- --nocapture
+cargo test clearing_house_test -- --nocapture 

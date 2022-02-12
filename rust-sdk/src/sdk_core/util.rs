@@ -6,23 +6,38 @@ use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::instruction::{AccountMeta, Instruction};
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::{read_keypair_file, Keypair};
+use std::rc::Rc;
 use std::{env, error};
 
 use super::error::DriftResult;
 
 pub struct DriftRpcClient {
     pub c: RpcClient,
+    pub conn: Rc<ConnectionConfig>
 }
 
 impl DriftRpcClient {
-    pub fn new(rpc_client: RpcClient) -> Self {
-        DriftRpcClient { c: rpc_client }
+    pub fn new(rpc_client: RpcClient, conn: Rc<ConnectionConfig>) -> Self {
+        DriftRpcClient { c: rpc_client, conn }
     }
     pub fn get_account_data<T: AccountDeserialize + 'static>(
         &self,
         account_pubkey: &Pubkey,
     ) -> DriftResult<Box<T>> {
-        let data = self.c.get_account_data(account_pubkey)?;
+        let data = {
+            let mut retry = 0;
+            let mut bytes: Option<solana_client::client_error::Result<Vec<u8>>> = Option::None;
+            while retry < 3 {
+                bytes = Some(self.c.get_account_data(account_pubkey));
+                if let Some(Ok(_)) = bytes {
+                    break;
+                }
+                retry += 1;
+                println!("retry getting account data for {}: [{}]", account_pubkey, retry); // todo use logger instead
+                std::thread::sleep(std::time::Duration::from_secs(4));
+            }
+            bytes.unwrap()
+        }?;
         let mut data: &[u8] = &data;
         Ok(Box::new(T::try_deserialize(&mut data)?))
     }
@@ -70,6 +85,10 @@ pub fn read_wallet_from_default() -> Result<Keypair, Box<dyn error::Error>> {
 
 pub fn read_wallet_from(path: String) -> Result<Keypair, Box<dyn error::Error>> {
     read_keypair_file(path)
+}
+
+pub fn get_state_pubkey() -> Pubkey {
+    Pubkey::find_program_address(&["clearing_house".as_bytes()], &clearing_house::id()).0
 }
 
 pub fn ix(program_id: &Pubkey, data: impl InstructionData, accounts: Context) -> Instruction {
@@ -125,3 +144,5 @@ pub mod size {
     pub const DEPOSIT_HISTORY_SIZE: usize = 132_112;
     pub const CURVE_HISTORY_SIZE: usize = 8720;
 }
+
+

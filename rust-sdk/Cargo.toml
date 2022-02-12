@@ -2,6 +2,10 @@
 name = "drift-sdk"
 version = "0.1.0"
 edition = "2018"
+autotests = false
+
+[workspace]
+members = []
 
 [lib]
 crate-type = ["cdylib", "lib"]
@@ -22,3 +26,10 @@ thiserror = "1.0"
 shellexpand = "2.1.0"
 clearing-house = { path = "../programs/clearing_house", features = ["no-entrypoint"] }
 
+[dev-dependencies]
+lazy_static = "1.4.0"
+
+[[test]]
+name = "clearing_house_test"
+path = "integration_test/clearing_house_test.rs"
+harness = false

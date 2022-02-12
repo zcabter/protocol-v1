@@ -844,9 +844,9 @@ version = "0.1.0"
 dependencies = [
  "anchor-client",
  "anchor-lang",
- "anyhow",
  "base64 0.12.3",
  "clearing-house",
+ "lazy_static",
  "shellexpand",
  "solana-account-decoder",
  "solana-client",

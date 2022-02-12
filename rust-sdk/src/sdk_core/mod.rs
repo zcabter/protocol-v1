@@ -6,7 +6,7 @@ pub mod util;
 
 use solana_sdk::{
     instruction::Instruction, pubkey::Pubkey, signature::Signature, signer::Signer,
-    transaction::Transaction,
+    transaction::Transaction, program_pack::Pack,
 };
 
 use crate::sdk_core::{error::DriftResult, util::DriftRpcClient};
@@ -47,7 +47,8 @@ pub trait ClearingHouse {
         )
     }
 
-    fn get_state_pubkey(&self) -> Pubkey {
-        Pubkey::find_program_address(&["clearing_house".as_bytes()], &self.program_id()).0
+    fn get_token_account(&self, pubkey: &Pubkey) -> DriftResult<spl_token::state::Account> {
+        let raw_account = self.client().c.get_account(pubkey)?;
+        Ok(spl_token::state::Account::unpack(&raw_account.data)?)
     }
 }

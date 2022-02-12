@@ -1,17 +1,24 @@
 use anchor_client::Cluster;
 use drift_sdk::sdk_core::util::read_wallet_from_default;
+use lazy_static::lazy_static;
 use solana_client::rpc_client::RpcClient;
-use solana_sdk::commitment_config::CommitmentConfig;
-use solana_sdk::pubkey::Pubkey;
-use solana_sdk::system_instruction as sol_sys_ix;
-use solana_sdk::transaction::Transaction;
-use solana_sdk::{program_pack::Pack, signature::Keypair, signer::Signer};
-use spl_token::instruction as spl_ix;
-use spl_token::state::{Account, Mint};
+use solana_sdk::{
+    commitment_config::CommitmentConfig, program_pack::Pack, pubkey::Pubkey, signature::Keypair,
+    signer::Signer, system_instruction as sol_sys_ix, transaction::Transaction,
+};
+use spl_token::{
+    instruction as spl_ix,
+    state::{Account, Mint},
+};
 
-pub fn create_mock_mint() -> Keypair {
+lazy_static! {
+    pub static ref MOCK_MINT_KEYPAIR: Keypair = Keypair::new();
+    pub static ref MOCK_USER_TOKEN_ACCOUNT_KEYPAIR: Keypair  = Keypair::new();
+}
+
+pub fn create_mock_mint() -> &'static Keypair {
     let wallet = read_wallet_from_default().unwrap();
-    let fake_usd_mint = Keypair::new();
+    let fake_usd_mint = &*MOCK_MINT_KEYPAIR;
     let space = Mint::LEN;
     let client = RpcClient::new_with_commitment(
         Cluster::default().url().to_string(),
@@ -50,11 +57,11 @@ pub fn create_mock_user_token_account(
     mint: &Keypair,
     amount: u64,
     owner: Option<&Pubkey>,
-) -> Keypair {
+) -> () {
     let wallet = read_wallet_from_default().unwrap();
     let wallet_pubkey = wallet.pubkey();
+    let user_token_account = &*MOCK_USER_TOKEN_ACCOUNT_KEYPAIR;
     let owner = owner.unwrap_or(&wallet_pubkey);
-    let user_token_account = Keypair::new();
     let space: usize = Account::LEN;
     let client = RpcClient::new_with_commitment(
         Cluster::default().url().to_string(),
@@ -98,5 +105,4 @@ pub fn create_mock_user_token_account(
         recent_blockhash,
     );
     client.send_and_confirm_transaction(&tx).unwrap();
-    user_token_account
 }

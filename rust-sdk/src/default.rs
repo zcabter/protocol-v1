@@ -12,14 +12,14 @@ use crate::sdk_core::{
 
 impl ClearingHouseUser<DefaultClearingHouseAccount> {
     pub fn default(cluster: Cluster) -> Self {
-        Self::default_with_commitment(cluster, CommitmentConfig::confirmed())
+        Self::default_with_commitment(cluster, CommitmentConfig::processed())
     }
 
     pub fn default_with_commitment(cluster: Cluster, commitment_config: CommitmentConfig) -> Self {
         let wallet = Box::new(read_wallet_from_default().unwrap());
         let conn = Rc::new(ConnectionConfig::from(cluster, commitment_config.clone()));
         let rpc_client = RpcClient::new_with_commitment(conn.get_rpc_url(), commitment_config);
-        let rpc_client = Rc::new(DriftRpcClient::new(rpc_client));
+        let rpc_client = Rc::new(DriftRpcClient::new(rpc_client, conn.clone()));
         ClearingHouseUser::new(
             wallet,
             conn.clone(),

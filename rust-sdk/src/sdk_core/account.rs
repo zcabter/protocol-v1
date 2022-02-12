@@ -13,7 +13,7 @@ use clearing_house::{
 use solana_client::{rpc_config::RpcAccountInfoConfig, pubsub_client::PubsubClientError};
 use solana_sdk::pubkey::Pubkey;
 
-use super::{error::DriftResult, util::{ConnectionConfig, DriftRpcClient}};
+use super::{error::DriftResult, util::{ConnectionConfig, DriftRpcClient, get_state_pubkey}};
 
 pub trait ClearingHouseAccount {
     fn subscribe(self: Self, consumer: AccountConsumer) -> Self;
@@ -38,7 +38,7 @@ pub trait DriftAccount<T> {
     fn unsubscribe(&self) -> Result<(), PubsubClientError>;
     fn is_subscribed(&self) -> bool;
     fn pubkey(&self) -> Pubkey;
-    fn get_data(&self, force: bool) -> DriftResult<Ref<Box<T>>>;
+    fn get_account_data(&self, force: bool) -> DriftResult<Ref<Box<T>>>;
     fn get_name(&self) -> String;
 }
 
@@ -67,9 +67,7 @@ pub struct DefaultClearingHouseAccount {
 
 impl DefaultClearingHouseAccount {
     pub fn new(conn: Rc<ConnectionConfig>, client: Rc<DriftRpcClient>) -> DefaultClearingHouseAccount {
-        let program_id = clearing_house::ID;
-        let state_pubkey =
-            Pubkey::find_program_address(&["clearing_house".as_bytes()], &program_id).0;
+        let state_pubkey = get_state_pubkey();
         let state_data = client.get_account_data::<State>(&state_pubkey).unwrap();
         let state = Box::new(account::WebSocketAccountSubscriber::<State>::new(
             state_pubkey,
@@ -330,7 +328,7 @@ pub mod account {
             self.pubkey
         }
 
-        fn get_data(self: &Self, force: bool) -> DriftResult<Ref<Box<T>>> {
+        fn get_account_data(self: &Self, force: bool) -> DriftResult<Ref<Box<T>>> {
             if force || self.data.borrow().is_none() {
                 let t: Box<T> = self.client.get_account_data(&self.pubkey)?;
                 self.data.replace(Some(t));
