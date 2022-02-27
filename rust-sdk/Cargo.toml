@@ -28,6 +28,7 @@ clearing-house = { path = "../programs/clearing_house", features = ["no-entrypoi
 
 [dev-dependencies]
 lazy_static = "1.4.0"
+pyth = { path = "../programs/pyth", features = ["no-entrypoint"] }
 
 [[test]]
 name = "clearing_house_test"

@@ -8,7 +8,7 @@ use clearing_house::{
     accounts, instruction,
     state::{market::Markets, state::State},
 };
-use solana_client::{client_error::ClientErrorKind, rpc_request::RpcError, rpc_client::RpcClient};
+use solana_client::{client_error::ClientErrorKind, rpc_request::RpcError, rpc_client::RpcClient, rpc_config::RpcSendTransactionConfig};
 use solana_sdk::{
     pubkey::Pubkey,
     signature::{Keypair, Signature},
@@ -34,12 +34,12 @@ impl DefaultClearingHouseAdmin {
         Self::new(wallet, cluster, commitment)
     }
 
-    pub fn default_with_commitment(cluster: Cluster, commitment_config: CommitmentConfig) -> Self {
+    pub fn default_with_config(cluster: Cluster, commitment_config: Option<CommitmentConfig>, tx_config: Option<RpcSendTransactionConfig>) -> Self {
         let wallet = Box::new(read_wallet_from_default().unwrap());
         Self::new(wallet, cluster, commitment_config)
     }
 
-    pub fn new(wallet: Box<dyn Signer>, cluster: Cluster, commitment_config: CommitmentConfig) -> Self {
+    pub fn new(wallet: Box<dyn Signer>, cluster: Cluster, commitment_config: CommitmentConfig, tx_config: RpcSendTransactionConfig) -> Self {
         let conn = Rc::new(ConnectionConfig::from(cluster, commitment_config.clone()));
         let rpc_client = RpcClient::new_with_commitment(conn.get_rpc_url(), commitment_config);
         let rpc_client = DriftRpcClient::new(rpc_client, conn);
@@ -175,7 +175,7 @@ pub trait ClearingHouseAdmin: ClearingHouse {
         
     }
 
-    fn send_initialize_clearing_market(
+    fn send_initialize_market(
         &self,
         market_index: u64,
         price_oracle: &Pubkey,

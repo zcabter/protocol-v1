@@ -1,12 +1,16 @@
 mod common;
-
 use crate::common::*;
 use anchor_client::Cluster;
-use clearing_house::state::{
-    history::{deposit::DepositDirection, funding_rate::FundingRateHistory, trade::TradeHistory},
-    market::Markets,
-    state::State,
-    user::{User, UserPositions},
+use clearing_house::{
+    controller::position::PositionDirection,
+    state::{
+        history::{
+            funding_rate::FundingRateHistory, trade::TradeHistory,
+        },
+        market::Markets,
+        state::State,
+        user::{User, UserPositions},
+    },
 };
 use drift_sdk::sdk_core::{
     account::ClearingHouseAccount,
@@ -17,13 +21,16 @@ use drift_sdk::sdk_core::{
 };
 use solana_sdk::{pubkey::Pubkey, signer::Signer};
 
-const USDC_AMOUNT: u64 = 10 * 10 ^ 6;
+const USDC_AMOUNT: u64 = 10 * 10_u64.pow(6);
+
 
 fn main() {
     println!("running clearing_house_test");
     test_initialize_state();
+    test_initialize_markets();
     test_init_user_account_and_deposit_collateral_atomically();
     test_windraw_collateral();
+    test_long_from_0_position();
 }
 
 fn test_initialize_state() {
@@ -69,6 +76,24 @@ fn test_initialize_state() {
     assert_eq!(1, trade_history.next_record_id());
 
     println!("test_initialize_state... ok")
+}
+
+fn test_initialize_markets() {
+    let sol_usd_address = mock_oracle(1, -7);
+    let admin = DefaultClearingHouseAdmin::default(Cluster::Localnet);
+    admin.send_initialize_market(
+        0, 
+        &sol_usd_address,
+        *AMM_INITIAL_BASE_ASSET_AMOUNT as u128, 
+        *AMM_INITIAL_QUOTE_ASSET_AMOUNT as u128, 
+        60 * 60, // periodicity
+        1000 // peg precision
+    ).unwrap();
+    let clearing_house_user = ClearingHouseUser::default(Cluster::Localnet);
+    let market_data = clearing_house_user.accounts.markets().get_account_data(true).unwrap().markets[0];
+    assert_eq!(market_data.initialized, true);
+    println!("test_initialize_markets... ok")
+
 }
 
 fn test_init_user_account_and_deposit_collateral_atomically() {
@@ -178,5 +203,59 @@ fn test_windraw_collateral() {
 }
 
 fn test_long_from_0_position() {
-    println!("test_long_from_0_position... ok")
+    let clearing_house_user = ClearingHouseUser::default(Cluster::Localnet);
+    clearing_house_user
+        .send_deposit_collateral(
+            USDC_AMOUNT,
+            &MOCK_USER_TOKEN_ACCOUNT_KEYPAIR.pubkey(),
+            None,
+        )
+        .unwrap();
+    let market_index = 0;
+    let incremental_usdc_notional_amount = calculate_trade_amount(USDC_AMOUNT);
+    clearing_house_user
+        .send_open_position(
+            PositionDirection::Long,
+            incremental_usdc_notional_amount,
+            market_index,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let user_account = clearing_house_user.user_account(true).unwrap();
+    assert_eq!(9950250, user_account.collateral);
+    assert_eq!(49750, user_account.total_fee_paid);
+    assert_eq!(USDC_AMOUNT as i128, user_account.cumulative_deposits);
+
+    let user_positions_account = clearing_house_user
+        .client
+        .get_account_data::<UserPositions>(&user_account.positions)
+        .unwrap();
+    assert_eq!(
+        49750000,
+        user_positions_account.positions[0].quote_asset_amount
+    );
+    assert_eq!(
+        497450503674885,
+        user_positions_account.positions[0].base_asset_amount
+    );
+    let markets_account = clearing_house_user
+        .accounts
+        .markets()
+        .get_account_data(true)
+        .unwrap();
+    let market = markets_account.markets[0];
+    assert_eq!(497450503674885, market.base_asset_amount);
+    assert_eq!(49750, market.amm.total_fee);
+    assert_eq!(49750, market.amm.total_fee_minus_distributions);
+
+    // can't test bc TradeHistory fields are private
+    // let trade_history_account = clearing_house_user
+    //     .accounts
+    //     .trade_history()
+    //     .get_account_data(true)
+    //     .unwrap();
+
+    println!("test_long_from_0_position... ok");
 }

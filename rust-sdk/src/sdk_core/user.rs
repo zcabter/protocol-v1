@@ -19,10 +19,7 @@ use solana_sdk::{
     sysvar::rent::ID as RENT_ID,
 };
 use spl_token::ID as TOKEN_PROGRAM_ID;
-use std::{
-    cell::RefCell,
-    rc::Rc,
-};
+use std::{cell::RefCell, rc::Rc};
 
 pub trait ClearingHouseUserTransactor: ClearingHouseUserInstruction {
     fn send_intialize_user_account(&self) -> DriftResult<(Signature, Pubkey)>;
@@ -30,7 +27,7 @@ pub trait ClearingHouseUserTransactor: ClearingHouseUserInstruction {
     fn send_deposit_collateral(
         &self,
         amount: u64,
-        collateral_account_pubkey: Pubkey,
+        collateral_account_pubkey: &Pubkey,
         user_positions_account_pubkey: Option<Pubkey>,
     ) -> DriftResult<Signature>;
     fn send_withdraw_collateral(
@@ -65,8 +62,22 @@ pub trait ClearingHouseUserInstruction {
     fn deposit_collateral_ix(
         &self,
         amount: u64,
-        collateral_acc_pub: Pubkey,
+        collateral_acc_pub: &Pubkey,
         user_pos_acc_pub: Option<Pubkey>,
+    ) -> DriftResult<Instruction>;
+    fn withdraw_collateral_ix(
+        &self,
+        amount: u64,
+        collateral_account_pubkey: &Pubkey,
+    ) -> DriftResult<Instruction>;
+    fn open_position_ix(
+        &self,
+        direction: PositionDirection,
+        amount: u128,
+        market_index: u64,
+        limit_price: Option<u128>,
+        discount_token: Option<Pubkey>,
+        referrer: Option<Pubkey>,
     ) -> DriftResult<Instruction>;
 }
 
@@ -113,7 +124,7 @@ impl<T: ClearingHouseAccount> ClearingHouse for ClearingHouseUser<T> {
     }
 }
 
-impl<T: ClearingHouseAccount> ClearingHouseUser<T>{
+impl<T: ClearingHouseAccount> ClearingHouseUser<T> {
     pub fn user_account_pubkey_and_nonce(&self) -> (Pubkey, u8) {
         if self._user_pubkey_and_nonce.borrow().is_none() {
             let result = Pubkey::find_program_address(
@@ -123,6 +134,10 @@ impl<T: ClearingHouseAccount> ClearingHouseUser<T>{
             self._user_pubkey_and_nonce.replace(Some(result));
         }
         self._user_pubkey_and_nonce.borrow().unwrap()
+    }
+
+    pub fn user_account_pubkey(&self) -> Pubkey {
+        self.user_account_pubkey_and_nonce().0
     }
 
     pub fn user_account(&self, force: bool) -> DriftResult<User> {
@@ -181,11 +196,11 @@ impl<T: ClearingHouseAccount> ClearingHouseUserInstruction for ClearingHouseUser
     fn deposit_collateral_ix(
         &self,
         amount: u64,
-        collateral_acc_pub: Pubkey,
+        collateral_acc_pub: &Pubkey,
         user_pos_acc_pub: Option<Pubkey>,
     ) -> DriftResult<Instruction> {
         let state = self.accounts.state().get_account_data(false)?;
-        
+
         let user_pos_acc_pub = match user_pos_acc_pub {
             Some(p) => p,
             None => self.user_account(false)?.positions,
@@ -199,7 +214,7 @@ impl<T: ClearingHouseAccount> ClearingHouseUserInstruction for ClearingHouseUser
                     user: self.user_account_pubkey_and_nonce().0,
                     authority: self.wallet.pubkey(),
                     collateral_vault: state.collateral_vault,
-                    user_collateral_account: collateral_acc_pub,
+                    user_collateral_account: collateral_acc_pub.clone(),
                     token_program: TOKEN_PROGRAM_ID,
                     markets: self.accounts.markets().pubkey(),
                     user_positions: user_pos_acc_pub,
@@ -207,6 +222,104 @@ impl<T: ClearingHouseAccount> ClearingHouseUserInstruction for ClearingHouseUser
                     deposit_history: state.deposit_history,
                 },
                 remaining_accounts: vec![],
+            },
+        );
+        Ok(ix)
+    }
+
+    fn withdraw_collateral_ix(
+        &self,
+        amount: u64,
+        collateral_account_pubkey: &Pubkey,
+    ) -> DriftResult<Instruction> {
+        let user_account_pubkey = self.user_account_pubkey_and_nonce().0;
+        let user = self.user_account(false)?;
+        let state = self.accounts.state().get_account_data(false)?;
+        let ix = ix(
+            &self.program_id,
+            instruction::WithdrawCollateral { amount },
+            Context {
+                accounts: &accounts::WithdrawCollateral {
+                    state: self.accounts.state().pubkey(),
+                    user: user_account_pubkey,
+                    authority: self.wallet.pubkey(),
+                    collateral_vault: state.collateral_vault,
+                    collateral_vault_authority: state.collateral_vault_authority,
+                    insurance_vault: state.insurance_vault,
+                    insurance_vault_authority: state.insurance_vault_authority,
+                    user_collateral_account: collateral_account_pubkey.clone(),
+                    token_program: TOKEN_PROGRAM_ID,
+                    markets: state.markets,
+                    user_positions: user.positions,
+                    funding_payment_history: state.funding_payment_history,
+                    deposit_history: state.deposit_history,
+                },
+                remaining_accounts: vec![],
+            },
+        );
+        Ok(ix)
+    }
+
+    fn open_position_ix(
+        &self,
+        direction: PositionDirection,
+        amount: u128,
+        market_index: u64,
+        limit_price: Option<u128>,
+        discount_token: Option<Pubkey>,
+        referrer: Option<Pubkey>,
+    ) -> DriftResult<Instruction> {
+        let user_account_pubkey = self.user_account_pubkey();
+        let user_account = self.user_account(false)?;
+        let limit_price = limit_price.unwrap_or(0);
+        let mut optional_accounts = ManagePositionOptionalAccounts {
+            discount_token: false,
+            referrer: false,
+        };
+        let mut remaining_accounts = vec![];
+        if let Some(pubkey) = discount_token {
+            optional_accounts.discount_token = true;
+            remaining_accounts.push(AccountMeta {
+                pubkey,
+                is_signer: false,
+                is_writable: false,
+            })
+        }
+        if let Some(pubkey) = referrer {
+            optional_accounts.referrer = true;
+            remaining_accounts.push(AccountMeta {
+                pubkey,
+                is_signer: false,
+                is_writable: true,
+            })
+        }
+        let price_oracle = self.accounts.markets().get_account_data(false)?.markets
+            [Markets::index_from_u64(market_index)]
+        .amm
+        .oracle;
+        let state = self.accounts.state().get_account_data(false)?;
+        let ix = ix(
+            &self.program_id,
+            instruction::OpenPosition {
+                direction,
+                quote_asset_amount: amount,
+                market_index,
+                limit_price,
+                optional_accounts,
+            },
+            Context {
+                accounts: &accounts::OpenPosition {
+                    state: self.accounts.state().pubkey(),
+                    user: user_account_pubkey,
+                    authority: self.wallet.pubkey(),
+                    markets: state.markets,
+                    user_positions: user_account.positions,
+                    trade_history: state.trade_history,
+                    funding_payment_history: state.funding_payment_history,
+                    funding_rate_history: state.funding_rate_history,
+                    oracle: price_oracle,
+                },
+                remaining_accounts,
             },
         );
         Ok(ix)
@@ -243,7 +356,7 @@ impl<T: ClearingHouseAccount> ClearingHouseUserTransactor for ClearingHouseUser<
     fn send_deposit_collateral(
         &self,
         amount: u64,
-        collateral_account_pubkey: Pubkey,
+        collateral_account_pubkey: &Pubkey,
         user_positions_account_pubkey: Option<Pubkey>,
     ) -> DriftResult<Signature> {
         let ix = self.deposit_collateral_ix(
@@ -259,96 +372,27 @@ impl<T: ClearingHouseAccount> ClearingHouseUserTransactor for ClearingHouseUser<
         amount: u64,
         collateral_account_pubkey: &Pubkey,
     ) -> DriftResult<Signature> {
-        let user_account_pubkey = self.user_account_pubkey_and_nonce().0;
-        let user = self.user_account(false)?;
-        let state = self.accounts.state().get_account_data(false)?;
-        let ix = ix(
-            &self.program_id,
-            instruction::WithdrawCollateral { amount },
-            Context {
-                accounts: &accounts::WithdrawCollateral {
-                    state: self.accounts.state().pubkey(),
-                    user: user_account_pubkey,
-                    authority: self.wallet.pubkey(),
-                    collateral_vault: state.collateral_vault,
-                    collateral_vault_authority: state.collateral_vault_authority,
-                    insurance_vault: state.insurance_vault,
-                    insurance_vault_authority: state.insurance_vault_authority,
-                    user_collateral_account: collateral_account_pubkey.clone(),
-                    token_program: TOKEN_PROGRAM_ID,
-                    markets: state.markets,
-                    user_positions: user.positions,
-                    funding_payment_history: state.funding_payment_history,
-                    deposit_history: state.deposit_history,
-                },
-                remaining_accounts: vec![],
-            },
-        );
+        let ix = self.withdraw_collateral_ix(amount, collateral_account_pubkey)?;
         self.send_tx(vec![], &[ix])
     }
 
     fn send_open_position(
         &self,
         direction: PositionDirection,
-        quote_asset_amount: u128,
+        amount: u128,
         market_index: u64,
         limit_price: Option<u128>,
         discount_token: Option<Pubkey>,
         referrer: Option<Pubkey>,
     ) -> DriftResult<Signature> {
-        let user_account_pubkey = self.user_account_pubkey_and_nonce().0;
-        let user_account = self.user_account(false)?;
-        let limit_price = limit_price.unwrap_or(0);
-        let mut optional_accounts = ManagePositionOptionalAccounts {
-            discount_token: false,
-            referrer: false,
-        };
-        let mut remaining_accounts = vec![];
-        if let Some(pubkey) = discount_token {
-            optional_accounts.discount_token = true;
-            remaining_accounts.push(AccountMeta {
-                pubkey,
-                is_signer: false,
-                is_writable: false,
-            })
-        }
-        if let Some(pubkey) = referrer {
-            optional_accounts.referrer = true;
-            remaining_accounts.push(AccountMeta {
-                pubkey,
-                is_signer: false,
-                is_writable: true,
-            })
-        }
-        let price_oracle = self.accounts.markets().get_account_data(false)?.markets
-            [Markets::index_from_u64(market_index)]
-        .amm
-        .oracle;
-        let state = self.accounts.state().get_account_data(false)?;
-        let ix = ix(
-            &self.program_id,
-            instruction::OpenPosition {
-                direction,
-                quote_asset_amount,
-                market_index,
-                limit_price,
-                optional_accounts,
-            },
-            Context {
-                accounts: &accounts::OpenPosition {
-                    state: self.accounts.state().pubkey(),
-                    user: user_account_pubkey,
-                    authority: self.wallet.pubkey(),
-                    markets: state.markets,
-                    user_positions: user_account.positions,
-                    trade_history: state.trade_history,
-                    funding_payment_history: state.funding_payment_history,
-                    funding_rate_history: state.funding_rate_history,
-                    oracle: price_oracle,
-                },
-                remaining_accounts,
-            },
-        );
+        let ix = self.open_position_ix(
+            direction,
+            amount,
+            market_index,
+            limit_price,
+            discount_token,
+            referrer,
+        )?;
         self.send_tx(vec![], &[ix])
     }
 
@@ -417,7 +461,7 @@ impl<T: ClearingHouseAccount> ClearingHouseUserTransactor for ClearingHouseUser<
     ) -> DriftResult<(Signature, Pubkey)> {
         let (user_pos_acc, user_acc_pub, init_user_acc_ix) = self.initialize_user_ix()?;
         let deposit_coll_ix =
-            self.deposit_collateral_ix(amount, *collateral_acc_pub, Some(user_pos_acc.pubkey()))?;
+            self.deposit_collateral_ix(amount, collateral_acc_pub, Some(user_pos_acc.pubkey()))?;
         self.send_tx(vec![&user_pos_acc], &[init_user_acc_ix, deposit_coll_ix])
             .map(|sig| (sig, user_acc_pub))
     }

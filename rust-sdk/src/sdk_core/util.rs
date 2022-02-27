@@ -2,6 +2,7 @@ use anchor_client::Cluster;
 use anchor_lang::{AccountDeserialize, InstructionData, ToAccountMetas};
 use solana_account_decoder::UiAccountEncoding;
 use solana_client::rpc_client::RpcClient;
+use solana_client::rpc_config::RpcSendTransactionConfig;
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::instruction::{AccountMeta, Instruction};
 use solana_sdk::pubkey::Pubkey;
@@ -13,12 +14,13 @@ use super::error::DriftResult;
 
 pub struct DriftRpcClient {
     pub c: RpcClient,
-    pub conn: Rc<ConnectionConfig>
+    pub conn: Rc<ConnectionConfig>, 
+    pub tx_config: RpcSendTransactionConfig
 }
 
 impl DriftRpcClient {
-    pub fn new(rpc_client: RpcClient, conn: Rc<ConnectionConfig>) -> Self {
-        DriftRpcClient { c: rpc_client, conn }
+    pub fn new(rpc_client: RpcClient, conn: Rc<ConnectionConfig>, tx_config: RpcSendTransactionConfig) -> Self {
+        DriftRpcClient { c: rpc_client, conn, tx_config }
     }
     pub fn get_account_data<T: AccountDeserialize + 'static>(
         &self,
